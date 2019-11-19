@@ -1,7 +1,9 @@
 module "label" {
   source     = "git::https://github.com/cloudposse/terraform-null-label.git?ref=tags/0.15.0"
+  label_order = var.label_order
   namespace  = var.namespace
   name       = var.name
+  environment = var.environment
   stage      = var.stage
   delimiter  = var.delimiter
   attributes = var.attributes
@@ -27,18 +29,20 @@ data "aws_iam_policy_document" "service" {
 }
 
 resource "aws_iam_role" "service" {
+  count = var.service_role == "" ? 1 : 0
   name               = "${module.label.id}-eb-service"
   assume_role_policy = data.aws_iam_policy_document.service.json
 }
 
 resource "aws_iam_role_policy_attachment" "enhanced_health" {
-  count      = var.enhanced_reporting_enabled ? 1 : 0
-  role       = aws_iam_role.service.name
+  count      = var.service_role == "" && var.enhanced_reporting_enabled ? 1 : 0
+  role       = join("", aws_iam_role.service.*.name)
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkEnhancedHealth"
 }
 
 resource "aws_iam_role_policy_attachment" "service" {
-  role       = aws_iam_role.service.name
+  count = var.service_role == "" ? 1 : 0
+  role       = join("", aws_iam_role.service.*.name)
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkService"
 }
 
@@ -340,16 +344,6 @@ locals {
       value     = join(",", var.loadbalancer_subnets)
     },
     {
-      namespace = "aws:elb:loadbalancer"
-      name      = "SecurityGroups"
-      value     = join(",", var.loadbalancer_security_groups)
-    },
-    {
-      namespace = "aws:elb:loadbalancer"
-      name      = "ManagedSecurityGroup"
-      value     = var.loadbalancer_managed_security_group
-    },
-    {
       namespace = "aws:elb:listener"
       name      = "ListenerProtocol"
       value     = "HTTP"
@@ -362,27 +356,7 @@ locals {
     {
       namespace = "aws:elb:listener"
       name      = "ListenerEnabled"
-      value     = var.http_listener_enabled || var.loadbalancer_certificate_arn == "" ? "true" : "false"
-    },
-    {
-      namespace = "aws:elb:listener:443"
-      name      = "ListenerProtocol"
-      value     = "HTTPS"
-    },
-    {
-      namespace = "aws:elb:listener:443"
-      name      = "InstancePort"
-      value     = var.application_port
-    },
-    {
-      namespace = "aws:elb:listener:443"
-      name      = "SSLCertificateId"
-      value     = var.loadbalancer_certificate_arn
-    },
-    {
-      namespace = "aws:elb:listener:443"
-      name      = "ListenerEnabled"
-      value     = var.loadbalancer_certificate_arn == "" ? "false" : "true"
+      value     = var.http_listener_enabled ? "true" : "false"
     },
     {
       namespace = "aws:elb:listener:${var.ssh_listener_port}"
@@ -410,29 +384,61 @@ locals {
       value     = "true"
     },
     {
-      namespace = "aws:elbv2:loadbalancer"
-      name      = "AccessLogsS3Bucket"
-      value     = join("", aws_s3_bucket.elb_logs.*.id)
-    },
-    {
-      namespace = "aws:elbv2:loadbalancer"
-      name      = "AccessLogsS3Enabled"
-      value     = "true"
-    },
-    {
-      namespace = "aws:elbv2:loadbalancer"
-      name      = "SecurityGroups"
-      value     = join(",", var.loadbalancer_security_groups)
-    },
-    {
-      namespace = "aws:elbv2:loadbalancer"
-      name      = "ManagedSecurityGroup"
-      value     = var.loadbalancer_managed_security_group
-    },
-    {
       namespace = "aws:elbv2:listener:default"
       name      = "ListenerEnabled"
-      value     = var.http_listener_enabled || var.loadbalancer_certificate_arn == "" ? "true" : "false"
+      value     = var.http_listener_enabled ? "true" : "false"
+    },
+    {
+      namespace = "aws:ec2:vpc"
+      name      = "ELBScheme"
+      value     = var.environment_type == "LoadBalanced" ? var.elb_scheme : ""
+    },
+    {
+      namespace = "aws:elasticbeanstalk:environment"
+      name      = "LoadBalancerType"
+      value     = var.loadbalancer_type
+    },
+    {
+      namespace = "aws:elasticbeanstalk:environment:process:default"
+      name      = "Port"
+      value     = var.application_port
+    }
+  ]
+
+  alb_settings = [
+    ###===================== Application Load Balancer Health check settings =====================================================###
+    # The Application Load Balancer health check does not take into account the Elastic Beanstalk health check path
+    # http://docs.aws.amazon.com/elasticbeanstalk/latest/dg/environments-cfg-applicationloadbalancer.html
+    # http://docs.aws.amazon.com/elasticbeanstalk/latest/dg/environments-cfg-applicationloadbalancer.html#alb-default-process.config
+    {
+      namespace = "aws:elasticbeanstalk:environment:process:default"
+      name      = "HealthCheckPath"
+      value     = var.healthcheck_url
+    },
+    {
+      namespace = "aws:elasticbeanstalk:environment:process:default"
+      name      = "Protocol"
+      value     = "HTTP"
+    },
+    {
+      namespace = "aws:elb:listener:443"
+      name      = "ListenerProtocol"
+      value     = "HTTPS"
+    },
+    {
+      namespace = "aws:elb:listener:443"
+      name      = "InstancePort"
+      value     = var.application_port
+    },
+    {
+      namespace = "aws:elb:listener:443"
+      name      = "SSLCertificateId"
+      value     = var.loadbalancer_certificate_arn
+    },
+    {
+      namespace = "aws:elb:listener:443"
+      name      = "ListenerEnabled"
+      value     = var.loadbalancer_certificate_arn == "" ? "false" : "true"
     },
     {
       namespace = "aws:elbv2:listener:443"
@@ -455,39 +461,47 @@ locals {
       value     = var.loadbalancer_type == "application" ? var.loadbalancer_ssl_policy : ""
     },
     {
-      namespace = "aws:ec2:vpc"
-      name      = "ELBScheme"
-      value     = var.environment_type == "LoadBalanced" ? var.elb_scheme : ""
+      namespace = "aws:elbv2:loadbalancer"
+      name      = "AccessLogsS3Bucket"
+      value     = var.elb_logs_bucket == "" ?  join("", aws_s3_bucket.elb_logs.*.id) : var.elb_logs_bucket
     },
     {
-      namespace = "aws:elasticbeanstalk:environment"
-      name      = "LoadBalancerType"
-      value     = var.loadbalancer_type
+      namespace = "aws:elbv2:loadbalancer"
+      name      = "AccessLogsS3Enabled"
+      value     = "true"
     },
+    {
+      namespace = "aws:elb:loadbalancer"
+      name      = "SecurityGroups"
+      value     = join(",", var.loadbalancer_security_groups)
+    },
+    {
+      namespace = "aws:elb:loadbalancer"
+      name      = "ManagedSecurityGroup"
+      value     = var.loadbalancer_managed_security_group
+    },
+    {
+      namespace = "aws:elbv2:loadbalancer"
+      name      = "SecurityGroups"
+      value     = join(",", var.loadbalancer_security_groups)
+    },
+    {
+      namespace = "aws:elbv2:loadbalancer"
+      name      = "ManagedSecurityGroup"
+      value     = var.loadbalancer_managed_security_group
+    },
+  ]
 
-    ###===================== Application Load Balancer Health check settings =====================================================###
-    # The Application Load Balancer health check does not take into account the Elastic Beanstalk health check path
-    # http://docs.aws.amazon.com/elasticbeanstalk/latest/dg/environments-cfg-applicationloadbalancer.html
-    # http://docs.aws.amazon.com/elasticbeanstalk/latest/dg/environments-cfg-applicationloadbalancer.html#alb-default-process.config
-    {
-      namespace = "aws:elasticbeanstalk:environment:process:default"
-      name      = "HealthCheckPath"
-      value     = var.healthcheck_url
-    },
-    {
-      namespace = "aws:elasticbeanstalk:environment:process:default"
-      name      = "Port"
-      value     = var.application_port
-    },
+  nlb_settings = [
     {
       namespace = "aws:elasticbeanstalk:environment:process:default"
       name      = "Protocol"
-      value     = "HTTP"
+      value     = "TCP"
     }
   ]
 
   # If the tier is "WebServer" add the elb_settings, otherwise exclude them
-  elb_settings_final = var.tier == "WebServer" ? local.elb_settings : []
+  elb_settings_final = var.tier == "WebServer" ? concat(local.elb_settings, (var.loadbalancer_type == "network" ? local.nlb_settings : local.alb_settings))  : []
 }
 
 #
@@ -558,7 +572,7 @@ resource "aws_elastic_beanstalk_environment" "default" {
   setting {
     namespace = "aws:elasticbeanstalk:environment"
     name      = "ServiceRole"
-    value     = aws_iam_role.service.name
+    value     = var.service_role == "" ? join("", aws_iam_role.service.*.name) : var.service_role
   }
 
   setting {
@@ -813,7 +827,7 @@ data "aws_iam_policy_document" "elb_logs" {
 }
 
 resource "aws_s3_bucket" "elb_logs" {
-  count         = var.tier == "WebServer" ? 1 : 0
+  count         = (var.elb_logs_bucket == "" && var.tier == "WebServer") ? 1 : 0
   bucket        = "${module.label.id}-eb-loadbalancer-logs"
   acl           = "private"
   force_destroy = var.force_destroy

@@ -3,6 +3,12 @@ variable "region" {
   description = "AWS region"
 }
 
+variable "label_order" {
+  type        = list(string)
+  description = "The naming order of the id output and Name tag"
+  default     = []
+}
+
 variable "namespace" {
   type        = string
   description = "Namespace, which could be your organization name, e.g. 'eg' or 'cp'"
@@ -12,6 +18,11 @@ variable "namespace" {
 variable "stage" {
   type        = string
   description = "Stage, e.g. 'prod', 'staging', 'dev', or 'test'"
+  default     = ""
+}
+
+variable "environment" {
+  type        = string
   default     = ""
 }
 
@@ -59,6 +70,11 @@ variable "loadbalancer_type" {
   type        = string
   default     = "classic"
   description = "Load Balancer type, e.g. 'application' or 'classic'"
+}
+
+variable "service_role" {
+  type        = string
+  default     = ""
 }
 
 variable "dns_zone_id" {
@@ -164,6 +180,11 @@ variable "force_destroy" {
   type        = bool
   default     = false
   description = "Force destroy the S3 bucket for load balancer logs"
+}
+
+variable "elb_logs_bucket" {
+  type        = string
+  default     = ""
 }
 
 variable "rolling_update_enabled" {
